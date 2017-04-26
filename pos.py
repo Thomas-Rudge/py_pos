@@ -1,7 +1,7 @@
 from decimal import Decimal
 import copy
 
-class POS:
+class System:
   def __init__(self, ccy='gbp', ref_start=1):
     self.ccy          = ccy
     self.ref          = ref_start
@@ -17,7 +17,7 @@ class POS:
 
   def submit(self, bill):
     self.system_total += bill.subtotal
-    bill_ref           - bill.bill_ref
+    bill_ref           = bill.bill_ref
 
     if bill_ref in self.bill_ref.keys():
       print('Bill {} has already been submitted!'.format(bill_ref))
@@ -28,9 +28,9 @@ class Bill:
   def __init__(self, pos, bill_ref):
     # Amounts will remain in cents until gotten
     self.pos       = pos
-    self.subtotal  = Decimal(0)
-    self.tax       = Decimal(0)
-    self.discount  = Decimal(0)
+    self.subtotal  = Decimal(0).quantize(Decimal('.01'))
+    self.tax       = Decimal(0).quantize(Decimal('.01'))
+    self.discount  = Decimal(0).quantize(Decimal('.01'))
     self.bill_ref  = bill_ref
     self.items     = {}
     self.submitted = False
@@ -65,28 +65,28 @@ class Bill:
     '''
     Calculates the bill balances by iterating over the items.
     '''
-    self.subtotal = Decimal(0)
-    self.tax      = Decimal(0)
-    self.discount = Decimal(0)
+    self.subtotal = Decimal(0).quantize(Decimal('.01'))
+    self.tax      = Decimal(0).quantize(Decimal('.01'))
+    self.discount = Decimal(0).quantize(Decimal('.01'))
 
     for key, item in self.items.items():
-      qty, item = item[1], item[0]
+      item, qty = item[0], item[1]
       price     = item.price
       tax       = item.tax
       # Remove any VAT
       if item.price_include_vat:
-        price = (price * 100) // (tax + 100)
+        price -= tax
       #Check whether a discount is to be applied
-      dscnt = discounter(item.discount, qty, price)
+      dscnt = self.discounter(item.discount, qty, price, tax, item.tax_rate).quantize(Decimal('.01'), rounding='ROUND_DOWN')
       #Total up
-      price = (price * qty) - dscnt
-      tax   = (price // Decimal(100) * tax)
+      price = ((price * qty) - dscnt).quantize(Decimal('.01'), rounding='ROUND_DOWN')
+      tax   = tax * qty
 
       self.discount += dscnt
       self.tax      += tax
       self.subtotal += (price + tax)
 
-  def discounter(discount, quantity, i_price):
+  def discounter(self, discount, quantity, i_price, i_tax, i_tax_rate):
     '''
     Calculates the discounted amount in cents for a given item, and
     returns it as a Decimal object.
@@ -105,15 +105,17 @@ class Bill:
       #Quantity Discount
       tot      = discount[0] + discount[1]
       d_qty    = quantity // tot
+      d_tax    = i_tax * d_qty
       d_amount = i_price
     elif discount and discount[2] == 1 and discount[0] <= quantity:
       #Monetary Discount
       d_qty    = quantity // discount[0]
       d_amount = Decimal(discount[1])
+      d_tax    = (d_amount * d_qty) * (i_tax_rate / 100)
 
-    return Decimal(d_amount * d_qty).quantize(0, rounding='ROUND_DOWN')
+    return Decimal(d_amount * d_qty - d_tax).quantize(0, rounding='ROUND_DOWN')
 
-  def submit():
+  def submit(self):
     if self.submitted:
       print("This bill has already been submitted.")
     else:
@@ -121,7 +123,7 @@ class Bill:
       self.submitted = True
       self.pos.submit(copy.deepcopy(self))
 
-class Item:
+class Item(object):
   def __init__(self, ccy, name, price, discount, tax, tags, price_include_vat):
     '''
     Items are created through the POS object, and added to bill objects
@@ -133,14 +135,14 @@ class Item:
                  - The second value (y) is the discount to be applied (Integer)
                  - The third value is either - 0 - Buy x get y free (y is a quantity)
                                              - 1 - Buy x get y off  (y is an amount in pence)
-    tax      - Must be an integer representing the tax in its smallest unit.
+    tax      - Must be an integer representing a percentage.
     tags     - Must be a string or array of strings
     '''
-    self.ccy   = ccy
-    self.name  = name
-    self.price = Decimal(int(price))
-    self.tax   = Decimal(int(tax))
-    self.tags  = tags
+    self.ccy      = ccy
+    self.name     = name
+    self.tags     = tags
+    self.tax_rate = Decimal(tax)
+    self.price    = Decimal(price).quantize(Decimal('.01'), rounding='ROUND_DOWN')
     self.price_include_vat = price_include_vat
 
     if self.check_discount(discount):
@@ -150,49 +152,73 @@ class Item:
 
   ## DISCOUNT GETTER, SETTER, and CHECKER
   @property
+  def tax(self):
+    return self._tax
+
+  @tax.setter
+  def tax(self, tax):
+    price = self.price
+    # If price is nil, tax is nil
+    if price in [0, None]:
+      self._tax     = Decimal(0)
+      self.tax_rate = Decimal(0)
+      return
+
+    if self.price_include_vat:
+      price = price / (1 + (Decimal(tax) / 100))
+
+    self._tax = (price * (Decimal(tax) / 100)).quantize(Decimal('.01'), rounding='ROUND_DOWN')
+    self.tax_rate = Decimal(tax)
+
+  @tax.getter
+  def tax(self):
+    return self._tax
+
+  @property
   def discount(self):
-    return self.__discount
+    return self._discount
 
   @discount.setter
   def discount(self, discount):
     if self.check_discount(discount):
-      self.__discount = discount
+      self._discount = discount
     else:
       print('Invalid value for discount.')
 
   @discount.getter
   def discount(self):
-    return self.__discount
+    return self._discount
 
   @property
   def tags(self):
-    self.__tags
+    self._tags
 
   @tags.setter
   def tags(self, tags):
     if type(tags) is list:
-      self.__tags = tags
+      self._tags = tags
     else:
       print('Invalid value for tags.')
 
   @tags.getter
   def tags(self):
-    return self.__tags
+    return self._tags
 
   @property
   def price_include_vat(self):
-    self.__price_include_vat
+    self._price_include_vat
 
   @price_include_vat.setter
   def price_include_vat(self, price_include_vat):
     if type(price_include_vat) is bool:
-      self.__price_include_vat = price_include_vat
+      self._price_include_vat = price_include_vat
+      self.tax = self.tax_rate
     else:
       print('Invalid value for VAT flag.')
 
   @price_include_vat.getter
   def price_include_vat(self):
-    return self.__price_include_vat
+    return self._price_include_vat
 
   def check_discount(self, discount):
     if ((discount is None)       or
@@ -204,3 +230,23 @@ class Item:
         0 <= discount[2] <= 1)):
       return True
     return False
+
+
+p    = System()
+spam = p.new_item("Spam", 1.50, tax=12)
+egg  = p.new_item("Egg", 0.60, tax=10, discount=[1, 1, 0])
+
+assert spam.tax_rate == Decimal('12')
+assert spam.tax      == Decimal('0.16')
+spam.tax = 15
+assert spam.tax_rate == Decimal('15')
+assert spam.tax      == Decimal('0.19')
+
+b = p.new_bill()
+b.add_item(spam)
+
+assert b.subtotal == Decimal('1.50')
+assert b.tax      == Decimal('0.19')
+assert b.discount == Decimal('0.00')
+
+b.add_item(egg, qty=3)
